@@ -1,0 +1,17 @@
+# Zig
+.zig-cache/
+zig-out/
+
+# Misc
+.directory
+massif.out.*
+vgcore.*
+
+# Editors
+.vscode
+
+# scratch
+/temp
+/tmp
+translations.txt
+*.bak

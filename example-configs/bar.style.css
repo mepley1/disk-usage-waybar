@@ -1,0 +1,43 @@
+/* https://github.com/Alexays/Waybar/wiki/Styling */
+
+@define-color darkBackground1 #1D2021;
+@define-color darkForeground1 #FBF1C7;
+
+@define-color darkMutedRed #cc241d;
+@define-color darkStrongRed #FB4934;
+@define-color darkStrongGreen #B8BB26;
+@define-color darkStrongYellow #FABD2F;
+
+* {
+    font-size: 16px;
+    font-family: "Iosevka", "Titillium Web", "Ubuntu Sans Mono";
+}
+
+window#waybar {
+    background-color: @darkBackground1;
+    color: @darkForeground1;
+}
+
+/*  Add some padding */
+.module{
+    padding: 8px 16px;
+    margin: 0px 8px;
+}
+
+/* Custom disk-usage module */
+/* Apply color based on total usage of '/' (root mount) */
+#custom-disk-usage {
+    color: @darkForeground1;
+}
+#custom-disk-usage.low {
+    color: @darkStrongGreen;
+}
+#custom-disk-usage.medium {
+    color: @darkStrongYellow;
+}
+#custom-disk-usage.high {
+    color: @darkMutedRed;
+}
+#custom-disk-usage.critical, #custom-disk-usage.err {
+    color: @darkStrongRed;
+}

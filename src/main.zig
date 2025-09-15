@@ -1,0 +1,55 @@
+//! A Waybar module for displaying storage usage info.
+//! Gives a summary of total usage of each mounted filesystem.
+//! Zig 0.15.1 + libc
+
+const std = @import("std");
+const heap = std.heap;
+const Io = std.Io;
+const mem = std.mem;
+const Thread = std.Thread;
+const time = std.time;
+
+const lib = @import("disk-usage-monitor-waybar"); // root.zig
+
+const c_sys = @cImport({
+    @cInclude("sys/statvfs.h");
+});
+
+const MOUNTS_PATH: []const u8 = "/proc/mounts";
+
+pub fn main() !void {
+    // Since I'm linking libc anyways
+    const c_allocator = heap.raw_c_allocator;
+
+    // Parse command line options
+    var options = lib.Options{};
+    try options.read();
+
+    while (true) {
+        var tmp_arena: heap.ArenaAllocator = .init(c_allocator);
+        defer tmp_arena.deinit();
+        var allocator = tmp_arena.allocator();
+
+        // Used for creating/formatting tooltip text
+        var w: Io.Writer.Allocating = .init(allocator);
+        defer w.deinit();
+
+        // Read `/proc/mounts` contents, as bytes
+        const file_contents: []const u8 = try lib.readFileBytes(allocator, MOUNTS_PATH);
+        defer allocator.free(file_contents);
+
+        // Parse contents to get the data we're interested in
+        const output_parts: lib.OutputParts = try lib.parseMnts(allocator, file_contents, options, &w);
+        defer allocator.free(output_parts.tooltip);
+
+        // Format final output
+        const output: []const u8 = try output_parts.assemble(allocator);
+        defer allocator.free(output);
+
+        try lib.bufferedPrint(output);
+
+        try lib.sendRTSig(allocator); // RTMIN+16
+
+        Thread.sleep(30 * time.ns_per_s);
+    }
+}
