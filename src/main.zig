@@ -5,15 +5,10 @@
 const std = @import("std");
 const heap = std.heap;
 const Io = std.Io;
-const mem = std.mem;
 const Thread = std.Thread;
 const time = std.time;
 
 const lib = @import("disk-usage-monitor-waybar"); // root.zig
-
-const c_sys = @cImport({
-    @cInclude("sys/statvfs.h");
-});
 
 const MOUNTS_PATH: []const u8 = "/proc/mounts";
 
