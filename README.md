@@ -6,13 +6,7 @@ Reads currently mounted filesystems from `/proc/mounts`, and outputs a summary i
 
 ### Demo:
 
-Mono font:
-
-![Demo](/screenshots/demo-mono.png)
-
-Sans font:
-
-![Demo](/screenshots/demo-sans.png)
+![Demo](/screenshots/demo.png)
 
 # Build
 
