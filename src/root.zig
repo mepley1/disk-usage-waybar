@@ -159,7 +159,7 @@ pub fn parseMnts(allocator: mem.Allocator, file_contents: []const u8, options: O
         allocator.free(line[0..]);
     };
 
-    // Save percentage used of root mount.
+    // Percentage used of root mount (`/`).
     var root_used_pcent: u8 = 0;
 
     // This doesn't need to be a named block, but it's easier to read and helps infer scope.
@@ -169,7 +169,6 @@ pub fn parseMnts(allocator: mem.Allocator, file_contents: []const u8, options: O
 
         var stat: c_sys.struct_statvfs = undefined;
 
-        // Tokenize file contents into lines
         var lines_iter = mem.tokenizeScalar(u8, file_contents, '\n');
 
         while (lines_iter.next()) |line| {
@@ -194,7 +193,7 @@ pub fn parseMnts(allocator: mem.Allocator, file_contents: []const u8, options: O
             // }
             // if (to_break) continue;
 
-            // Call statvfs on the mount point
+            // Call `statvfs` on the mount point
             const rc = c_sys.statvfs(mount_point_z.ptr, &stat);
             if (rc != 0) continue; // 0 = Failure, skip to next entry
 
@@ -205,7 +204,6 @@ pub fn parseMnts(allocator: mem.Allocator, file_contents: []const u8, options: O
             const f_type: c_uint = stat.f_type;
 
             // TODO: Parse mount flags (stat.f_flag, bitmask)
-            // Get f_flags bitmask
             // const flags = stat.f_flag;
 
             // Check if `f_type` is in `ignored_ftypes` enum, and if so, skip to next iteration
@@ -265,7 +263,6 @@ pub fn parseMnts(allocator: mem.Allocator, file_contents: []const u8, options: O
         break :parse_entries;
     }
 
-    // CSS class for dynamic styling
     const css_class: CssClass = switch (root_used_pcent) {
         0...49 => .low,
         50...74 => .medium,
