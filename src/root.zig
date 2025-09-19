@@ -3,11 +3,15 @@
 
 const std = @import("std");
 const ArrayList = std.ArrayList;
+const ascii = std.ascii;
 const enums = std.enums;
+const fmt = std.fmt;
 const fs = std.fs;
 const Io = std.Io;
+const linux = std.os.linux;
 const mem = std.mem;
 const meta = std.meta;
+const posix = std.posix;
 const process = std.process;
 
 const c_sys = @cImport({
@@ -41,16 +45,43 @@ pub fn unbufferedPrint(bytes: []const u8) error{WriteFailed}!void {
     try stdout.flush();
 }
 
-/// Send `RTMIN+16` signal via pkill to Waybar, to update module. Return true if successful, else false.
-///
-/// TODO: Accept/target specific instance of Waybar in case of multiple (target by `--bar`/"Bar id" or PID?).
-pub fn sendRTSig(alloc: mem.Allocator) (process.Child.SpawnError || error{RTSigError})!void {
-    var cmd = process.Child.init(&[_][]const u8{ "pkill", "-RTMIN+16", "waybar" }, alloc);
-    const t = try cmd.spawnAndWait();
-    switch (t.Exited) {
-        0 => return,
-        else => return error.RTSigError, // Probably Waybar not running
+/// Send realtime signal to Waybar process, to signal module update.
+/// See https://manpages.org/signal/7
+pub fn rtSig(pid: linux.pid_t, sig_num: u8) !void {
+    assert(pid > 0);
+    const sig = linux.sigrtmin() + sig_num;
+    assert(sig <= linux.sigrtmax());
+    try posix.kill(pid, sig);
+}
+
+/// Lookup PID of the first process with matching name.
+pub fn getPidByName(target_name: []const u8) !?linux.pid_t {
+    var dir = try fs.openDirAbsolute("/proc", .{ .iterate = true });
+    defer dir.close();
+
+    var dir_iter = dir.iterate();
+    while (try dir_iter.next()) |entry| {
+        if (entry.kind != .directory) continue;
+        if (!ascii.isDigit(entry.name[0])) continue;
+
+        var buf_path: [64]u8 = undefined;
+        const comm_path = try fmt.bufPrint(&buf_path, "/proc/{s}/comm", .{entry.name});
+
+        const comm_file = fs.openFileAbsolute(comm_path, .{}) catch continue;
+        defer comm_file.close();
+
+        const max_len = 256;
+        var buf_comm: [max_len]u8 = undefined;
+        const len = try comm_file.read(&buf_comm);
+        const comm = mem.trimEnd(u8, buf_comm[0..len], "\n");
+
+        if (mem.eql(u8, comm, target_name)) {
+            const pid = try fmt.parseInt(linux.pid_t, entry.name, 10);
+            return pid;
+        }
     }
+
+    return null; // Not found
 }
 
 /// Concatenate two runtime-known slices. Caller must free returned slice.
@@ -164,7 +195,6 @@ pub fn parseMnts(allocator: mem.Allocator, file_contents: []const u8, options: O
             // if (to_break) continue;
 
             // Call statvfs on the mount point
-            // var stat: c_sys.struct_statvfs = undefined;
             const rc = c_sys.statvfs(mount_point_z.ptr, &stat);
             if (rc != 0) continue; // 0 = Failure, skip to next entry
 
@@ -192,7 +222,7 @@ pub fn parseMnts(allocator: mem.Allocator, file_contents: []const u8, options: O
                 assert(0 <= root_used_pcent and root_used_pcent <= 100); // Percentage calculated incorrectly
             }
 
-            assemble_tooltip: {
+            append_tooltip: {
 
                 // ## Assemble tooltip paragraph for this filesystem, line by line, appending each to `tooltip_bytes`
 
@@ -226,7 +256,7 @@ pub fn parseMnts(allocator: mem.Allocator, file_contents: []const u8, options: O
                 try tooltip_bytes.appendSlice(allocator, ln_3);
                 try need_freed.append(allocator, ln_3);
 
-                break :assemble_tooltip;
+                break :append_tooltip;
             }
         }
 
@@ -241,7 +271,6 @@ pub fn parseMnts(allocator: mem.Allocator, file_contents: []const u8, options: O
         50...74 => .medium,
         75...89 => .high,
         90...100 => .critical,
-        // else => .err, // This should be caught by an assertion by now
         else => unreachable,
     };
 

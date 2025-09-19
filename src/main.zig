@@ -1,6 +1,6 @@
 //! A Waybar module for displaying storage usage info.
 //! Gives a summary of total usage of each mounted filesystem.
-//! Zig 0.15.1 + libc
+//! Zig 0.15.1
 
 const std = @import("std");
 const heap = std.heap;
@@ -13,7 +13,6 @@ const lib = @import("disk-usage-monitor-waybar"); // root.zig
 const MOUNTS_PATH: []const u8 = "/proc/mounts";
 
 pub fn main() !void {
-    // Since I'm linking libc anyways
     const c_allocator = heap.raw_c_allocator;
 
     // Parse command line options
@@ -43,7 +42,9 @@ pub fn main() !void {
 
         try lib.bufferedPrint(output);
 
-        try lib.sendRTSig(allocator); // RTMIN+16
+        const pid = try lib.getPidByName("waybar");
+
+        try lib.rtSig(pid.?, 16);
 
         Thread.sleep(30 * time.ns_per_s);
     }
