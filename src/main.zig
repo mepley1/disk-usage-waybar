@@ -20,31 +20,37 @@ pub fn main() !void {
     try options.read();
 
     while (true) {
-        var tmp_arena: heap.ArenaAllocator = .init(c_allocator);
-        defer tmp_arena.deinit();
-        var allocator = tmp_arena.allocator();
+        analyze: {
+            var tmp_arena: heap.ArenaAllocator = .init(c_allocator);
+            defer tmp_arena.deinit();
+            var allocator = tmp_arena.allocator();
 
-        // Used for creating/formatting tooltip text
-        var w: Io.Writer.Allocating = .init(allocator);
-        defer w.deinit();
+            var w: Io.Writer.Allocating = .init(allocator);
+            defer w.deinit();
 
-        // Read `/proc/mounts` contents, as bytes
-        const file_contents: []const u8 = try lib.readFileBytes(allocator, MOUNTS_PATH);
-        defer allocator.free(file_contents);
+            // Read `/proc/mounts` contents, as bytes
+            const file_contents: []const u8 = try lib.readFileBytes(allocator, MOUNTS_PATH);
+            defer allocator.free(file_contents);
 
-        // Parse contents to get the data we're interested in
-        const output_parts: lib.OutputParts = try lib.parseMnts(allocator, file_contents, options, &w);
-        defer allocator.free(output_parts.tooltip);
+            // Parse contents to get the data we're interested in
+            const output_parts: lib.OutputParts = try lib.parseMnts(allocator, file_contents, options, &w);
+            defer allocator.free(output_parts.tooltip);
 
-        // Format final output
-        const output: []const u8 = try output_parts.assemble(allocator);
-        defer allocator.free(output);
+            // Format final output
+            const output: []const u8 = try output_parts.assemble(allocator);
+            defer allocator.free(output);
 
-        try lib.bufferedPrint(output);
+            try lib.bufferedPrint(output);
 
-        const pid = try lib.getPidByName("waybar");
+            break :analyze;
+        }
 
-        try lib.rtSig(pid.?, 16);
+        update: {
+            const pid = try lib.getPidByName("waybar");
+            try lib.rtSig(pid.?, 16);
+
+            break :update;
+        }
 
         Thread.sleep(30 * time.ns_per_s);
     }

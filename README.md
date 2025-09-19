@@ -40,7 +40,7 @@ valgrind --tool=massif ./zig-out/bin/disk-usage-monitor-waybar
 
 Note: You must use the `std.heap.c_allocator` (or `heap.raw_c_allocator`) to profile a Zig executable under valgrind/massif, otherwise massif will report zero heap usage/incorrect leak results.
 
-Executable comes out to ~380KiB depending on target. Peak heap usage around <15KiB.
+Executable comes out to ~380KiB depending on target. Peak heap usage around 13KiB with ~10 mounted filesystems.
 
 # Usage
 
