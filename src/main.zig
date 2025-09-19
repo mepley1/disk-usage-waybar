@@ -47,7 +47,10 @@ pub fn main() !void {
 
         update: {
             const pid = try lib.getPidByName("waybar");
-            try lib.rtSig(pid.?, 16);
+            if (pid) |p| {
+                @branchHint(.likely);
+                try lib.rtSig(p, 16);
+            }
 
             break :update;
         }

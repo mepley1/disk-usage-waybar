@@ -45,11 +45,11 @@ pub fn unbufferedPrint(bytes: []const u8) error{WriteFailed}!void {
     try stdout.flush();
 }
 
-/// Send realtime signal to Waybar process, to signal module update.
+/// Send realtime signal (`RTMIN` + `n`) to Waybar process, to signal module update.
 /// See https://manpages.org/signal/7
-pub fn rtSig(pid: linux.pid_t, sig_num: u8) !void {
+pub fn rtSig(pid: linux.pid_t, n: u8) !void {
     assert(pid > 0);
-    const sig = linux.sigrtmin() + sig_num;
+    const sig = linux.sigrtmin() + n;
     assert(sig <= linux.sigrtmax());
     try posix.kill(pid, sig);
 }
