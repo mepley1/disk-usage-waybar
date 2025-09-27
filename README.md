@@ -61,7 +61,6 @@ First, add it to your waybar config and configure however you want it. An exampl
         "exec": "/path/to/bin/disk-usage-monitor-waybar", 
         "return-type": "json",
         "format": "{icon} {text} {percentage}%",
-        // Update every 30 seconds:
         "restart-interval": 30,
         // This optional `format-icons` config will display warning icon if `percentage` is >75%, otherwise the HDD icon:
         "format-icons": {
@@ -87,13 +86,13 @@ Example stylesheet applying various colors mapped to usage level:
     color: @darkForeground1;
 }
 #custom-disk-usage.low {
-    color: @darkForeground1;
+    color: @darkStrongGreen;
 }
 #custom-disk-usage.medium {
     color: @darkStrongYellow;
 }
 #custom-disk-usage.high {
-    color: @darkStrongOrange;
+    color: @darkMutedRed;
 }
 #custom-disk-usage.critical, #custom-disk-usage.err {
     color: @darkStrongRed;
