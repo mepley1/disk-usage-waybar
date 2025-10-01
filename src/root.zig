@@ -54,8 +54,8 @@ pub fn rtSig(pid: linux.pid_t, n: u8) !void {
     try posix.kill(pid, sig);
 }
 
-/// Lookup PID of the first process with matching name.
-pub fn getPidByName(target_name: []const u8) !?linux.pid_t {
+/// Lookup PID of the first process matching `target_name`. Return null if not found.
+pub fn getPidByName(proc_name: []const u8) !?linux.pid_t {
     var dir = try fs.openDirAbsolute("/proc", .{ .iterate = true });
     defer dir.close();
 
@@ -70,18 +70,26 @@ pub fn getPidByName(target_name: []const u8) !?linux.pid_t {
         const comm_file = fs.openFileAbsolute(comm_path, .{}) catch continue;
         defer comm_file.close();
 
-        const max_len = 256;
-        var buf_comm: [max_len]u8 = undefined;
+        const comm_max_len = 256;
+        var buf_comm: [comm_max_len]u8 = undefined;
         const len = try comm_file.read(&buf_comm);
+        assert(len <= comm_max_len);
+
         const comm = mem.trimEnd(u8, buf_comm[0..len], "\n");
 
-        if (mem.eql(u8, comm, target_name)) {
+        if (mem.eql(u8, comm, proc_name)) {
             const pid = try fmt.parseInt(linux.pid_t, entry.name, 10);
+            assert(pid > 0);
             return pid;
         }
     }
 
-    return null; // Not found
+    return null;
+}
+
+test "getPidByName" {
+    try std.testing.expect(try getPidByName("systemd") == 1);
+    try std.testing.expect(try getPidByName("nonexistent process") == null);
 }
 
 /// Concatenate two runtime-known slices. Caller must free returned slice.
@@ -112,13 +120,20 @@ pub fn concatRuntimeMulti(alloc: mem.Allocator, comptime T: type, arrs: []const 
     var out = alloc.alloc(T, out_len) catch @panic("Out of memory");
     errdefer alloc.free(out);
 
-    var cursor: usize = 0;
+    var cur: usize = 0;
     for (arrs) |arr| {
-        @memcpy(out[cursor .. cursor + arr.len], arr);
-        cursor += arr.len;
+        @memcpy(out[cur .. cur + arr.len], arr);
+        cur += arr.len;
     }
 
     return out;
+}
+
+test "concatRuntimeMulti" {
+    var alloc = std.testing.allocator;
+    const s = concatRuntimeMulti(alloc, u8, &[3][]const u8{ "a", "b", "c" });
+    defer alloc.free(s);
+    try std.testing.expectEqualStrings("abc", s);
 }
 
 /// Read contents of `/proc/mounts`, return allocated slice. Caller must free.
@@ -142,12 +157,12 @@ pub fn readFileBytes(allocator: mem.Allocator, file_path: []const u8) ![]const u
 ///
 /// - Append each line as *bytes* directly to an `ArrayList(u8)` (using `.appendSlice`), and return owned slice of its `.items` (skip the intermediate list).
 ///
-/// The second option results in a slightly higher PEAK heap usage towards end of run (~11.4K vs ~9.8K in my case), but for most of runtime, total usage is lower. Requires tracking allocations in a second list of slices to be freed.
+/// The second option results in a slightly higher PEAK heap usage towards end of run, but for most of runtime, total usage is lower. Requires tracking allocations in a second list of slices to be freed, if not using arena.
 ///
 /// I've chosen to stick with #2, for simplicity. But also because I don't feel like re-writing it again. ;)
 ///
 /// TODO: Separate into smaller functions
-pub fn parseMnts(allocator: mem.Allocator, file_contents: []const u8, options: Options, w: *Io.Writer.Allocating) !OutputParts {
+pub fn parseMnts(allocator: mem.Allocator, file_contents: []const u8, options: *Options, w: *Io.Writer.Allocating) !OutputParts {
     var tooltip_bytes: ArrayList(u8) = .empty;
     errdefer tooltip_bytes.deinit(allocator);
 
@@ -166,8 +181,7 @@ pub fn parseMnts(allocator: mem.Allocator, file_contents: []const u8, options: O
     parse_entries: {
         const line_1_fmt = "{s} on {s}\\r";
         const line_2_fmt = "\\tSize: {d:.2} GiB\\r";
-
-        var stat: c_sys.struct_statvfs = undefined;
+        var stat: c_sys.struct_statvfs = .{};
 
         var lines_iter = mem.tokenizeScalar(u8, file_contents, '\n');
 
@@ -200,13 +214,12 @@ pub fn parseMnts(allocator: mem.Allocator, file_contents: []const u8, options: O
             const total: c_ulong = stat.f_blocks * stat.f_frsize;
             const free: c_ulong = stat.f_bfree * stat.f_frsize;
             const used: c_ulong = total - free;
-
             const f_type: c_uint = stat.f_type;
 
             // TODO: Parse mount flags (stat.f_flag, bitmask)
             // const flags = stat.f_flag;
 
-            // Check if `f_type` is in `ignored_ftypes` enum, and if so, skip to next iteration
+            // // Check if `f_type` is in `ignored_ftypes` enum, and if so, skip to next iteration
             if (ignored_ftypes.fromCInt(f_type) != null) continue;
 
             if (total == 0) continue; // Skip to next entry if zero size (vfs entries).
@@ -234,7 +247,7 @@ pub fn parseMnts(allocator: mem.Allocator, file_contents: []const u8, options: O
 
                 // Line 2 - total size
                 // Only include if format=.normal -- Skip if .compact
-                if (options.tooltip_fmt == .normal) {
+                if (options.*.tooltip_fmt == .normal) {
                     try w.writer.print(line_2_fmt, .{@as(f32, @floatFromInt(total)) / gibi});
                     const ln_2 = try w.toOwnedSlice();
                     errdefer allocator.free(ln_2);
@@ -244,7 +257,7 @@ pub fn parseMnts(allocator: mem.Allocator, file_contents: []const u8, options: O
                 }
 
                 // Line 3 - Used amount
-                switch (options.tooltip_fmt) {
+                switch (options.*.tooltip_fmt) {
                     .compact => try w.writer.print("\\tUsed: {d:.2} GiB of {d:.2} GiB ({d:.1}%)\\r", .{ @as(f32, @floatFromInt(used)) / gibi, @as(f32, @floatFromInt(total)) / gibi, used_pcent }),
                     .normal => try w.writer.print("\\tUsed: {d:.2} GiB ({d:.1}%)\\r\\r", .{ @as(f32, @floatFromInt(used)) / gibi, used_pcent }),
                 }
@@ -276,7 +289,7 @@ pub fn parseMnts(allocator: mem.Allocator, file_contents: []const u8, options: O
     // Trim trailing whitespace
     // Number of bytes depends on value of `line_3` in `parse_entries` block of parseMnts(), which ends with 1 or 2 escaped newlines.
     // Includes extra bytes for escaped `\` in output. (newline = `\\n`)
-    const n_whitespace_bytes: usize = switch (options.tooltip_fmt) {
+    const n_whitespace_bytes: usize = switch (options.*.tooltip_fmt) {
         .normal => 4,
         .compact => 2,
     };
@@ -344,7 +357,7 @@ pub const Options = struct {
         var args = process.args();
         _ = args.next() orelse return; // Discard program name
 
-        // Parse tooltip_lines format
+        // Parse tooltip format
         const arg_tooltip_fmt: [:0]const u8 = args.next() orelse return; // Abort if not given
         const tooltip_fmt: []const u8 = mem.span(arg_tooltip_fmt.ptr);
         self.*.tooltip_fmt = meta.stringToEnum(TooltipFmt, tooltip_fmt) orelse return error.InvalidOption;

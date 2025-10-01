@@ -11,6 +11,7 @@ const time = std.time;
 const lib = @import("disk-usage-monitor-waybar"); // root.zig
 
 const MOUNTS_PATH: []const u8 = "/proc/mounts";
+const UPDATE_INTERVAL: u64 = 20 * time.ns_per_s;
 
 pub fn main() !void {
     const c_allocator = heap.raw_c_allocator;
@@ -33,7 +34,7 @@ pub fn main() !void {
             defer allocator.free(file_contents);
 
             // Parse contents to get the data we're interested in
-            const output_parts: lib.OutputParts = try lib.parseMnts(allocator, file_contents, options, &w);
+            const output_parts: lib.OutputParts = try lib.parseMnts(allocator, file_contents, &options, &w);
             defer allocator.free(output_parts.tooltip);
 
             // Format final output
@@ -55,6 +56,6 @@ pub fn main() !void {
             break :update;
         }
 
-        Thread.sleep(30 * time.ns_per_s);
+        Thread.sleep(UPDATE_INTERVAL);
     }
 }
