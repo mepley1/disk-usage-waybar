@@ -35,6 +35,7 @@ pub fn bufferedPrint(bytes: []const u8) error{WriteFailed}!void {
 
     try stdout.print("{s}", .{bytes});
     try stdout.flush();
+    return;
 }
 
 /// Write to stdout, unbuffered.
@@ -44,15 +45,21 @@ pub fn unbufferedPrint(bytes: []const u8) error{WriteFailed}!void {
 
     try stdout.writeAll(bytes);
     try stdout.flush();
+    return;
 }
 
 /// Send realtime signal (`RTMIN` + `n`) to Waybar process, to signal module update.
-/// See https://manpages.org/signal/7
+///
+/// Asserts `pid > 0` and `n <= 32`
+///
+/// ref: https://manpages.org/signal/7
 pub fn rtSig(pid: linux.pid_t, n: u8) !void {
     assert(pid > 0);
+    assert(n <= 32);
     const sig = linux.sigrtmin() + n;
     assert(sig <= linux.sigrtmax());
     try posix.kill(pid, sig);
+    return;
 }
 
 /// Lookup PID of the first process matching `target_name`. Return null if not found.
@@ -89,7 +96,7 @@ pub fn getPidByName(proc_name: []const u8) !?linux.pid_t {
 }
 
 test "getPidByName" {
-    try std.testing.expect(try getPidByName("systemd") == 1);
+    try std.testing.expect(try getPidByName("systemd") == 1); // Depends on systemd
     try std.testing.expect(try getPidByName("nonexistent process") == null);
 }
 
@@ -143,9 +150,10 @@ test "concatRuntimeMulti" {
 ///
 /// See Andrew's pr notes #25077 (https://github.com/ziglang/zig/pull/25077)
 pub fn readFileBytes(allocator: mem.Allocator, file_path: []const u8) ![]const u8 {
+    assert(file_path.len <= posix.PATH_MAX);
     const file_contents: []const u8 = try fs.cwd().readFileAlloc(allocator, file_path, kibi * 8);
     errdefer allocator.free(file_contents);
-    assert(file_contents.len > 0); // file_contents is zero bytes long - failure reading
+    assert(file_contents.len > 0); // `file_contents` is zero bytes long -- failure reading
     return file_contents;
 }
 
@@ -315,7 +323,7 @@ pub const OutputWaybar = struct {
     class: []const u8, // call `CssClass.asSlice()` to get a slice
     percentage: u8,
 
-    /// Jsonify and append trailing newline.
+    /// Jsonify and append trailing newline. Caller must free result.
     ///
     /// ref: https://ziggit.dev/t/zig-0-15-1-reader-writer-dont-make-copies-of-fieldparentptr-based-interfaces/11719
     pub fn jsonify(self: OutputWaybar, allocator: mem.Allocator, w: *Io.Writer.Allocating) error{ OutOfMemory, WriteFailed }![]const u8 {
@@ -328,6 +336,38 @@ pub const OutputWaybar = struct {
         return out;
     }
 };
+
+test "OutputWaybar" {
+    const allocator: std.mem.Allocator = std.testing.allocator;
+
+    var w: Io.Writer.Allocating = .init(allocator);
+    defer w.deinit();
+
+    const data = OutputWaybar{
+        .class = "low",
+        .percentage = 50,
+        .tooltip = "abc",
+    };
+
+    try std.testing.expectEqualStrings("Storage", data.text);
+    try std.testing.expectEqualStrings("abc", data.tooltip);
+    try std.testing.expectEqualStrings("low", data.class);
+    try std.testing.expectEqual(50, data.percentage);
+
+    const as_json = try data.jsonify(allocator, &w);
+    defer allocator.free(as_json);
+
+    const expected: []const u8 = "{\"text\":\"Storage\",\"tooltip\":\"abc\",\"class\":\"low\",\"percentage\":50}\n";
+    try std.testing.expectEqualStrings(expected, as_json);
+
+    var parsed = try std.json.parseFromSlice(OutputWaybar, allocator, as_json, .{});
+    defer parsed.deinit();
+
+    try std.testing.expectEqualStrings("Storage", parsed.value.text);
+    try std.testing.expectEqualStrings("abc", parsed.value.tooltip);
+    try std.testing.expectEqualStrings("low", parsed.value.class);
+    try std.testing.expectEqual(50, parsed.value.percentage);
+}
 
 /// CSS class to pass to Waybar, for dynamic styling.
 const CssClass = enum {
@@ -372,6 +412,8 @@ pub const Options = struct {
         const arg_lang: [:0]const u8 = args.next() orelse return; // Abort if not given
         const lang_str: []const u8 = mem.span(arg_lang.ptr);
         self.*.lang = meta.stringToEnum(Lang, lang_str) orelse return error.InvalidOption;
+
+        return;
     }
 
     const TooltipFmt = enum(u8) {
