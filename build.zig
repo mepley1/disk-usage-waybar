@@ -31,7 +31,8 @@ pub fn build(b: *std.Build) void {
     // Link libc
     exe.linkLibC();
 
-    // `no_bin` option usage: `zig build -Dno-bin -fincremental --watch --debounce 100`
+    // `no_bin` option
+    // Usage: `zig build -Dno-bin -fincremental --watch --debounce 100`
     const no_bin = b.option(bool, "no-bin", "Skip emitting binary") orelse false;
     if (no_bin) {
         b.getInstallStep().dependOn(&exe.step);
