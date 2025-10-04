@@ -53,7 +53,7 @@ First, add it to your waybar config and configure however you want it. An exampl
 
 ```jsonc
 "modules-right": [
-    "custom/disk-usage",
+    "custom/disk-usage"
 ],
 
 // Can name it whatever you want, as long as you use the same name everywhere (including CSS)
