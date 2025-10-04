@@ -34,11 +34,11 @@ pub fn main() !void {
             defer allocator.free(file_contents);
 
             // Parse contents to get the data we're interested in
-            const output_parts: lib.OutputParts = try lib.parseMnts(allocator, file_contents, &options, &w);
+            const output_parts: lib.OutputWaybar = try lib.parseMnts(allocator, file_contents, &options, &w);
             defer allocator.free(output_parts.tooltip);
 
             // Format final output
-            const output: []const u8 = try output_parts.assemble(allocator);
+            const output: []const u8 = try output_parts.jsonify(allocator, &w);
             defer allocator.free(output);
 
             try lib.bufferedPrint(output);

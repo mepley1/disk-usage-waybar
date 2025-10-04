@@ -8,6 +8,7 @@ const enums = std.enums;
 const fmt = std.fmt;
 const fs = std.fs;
 const Io = std.Io;
+const json = std.json;
 const linux = std.os.linux;
 const mem = std.mem;
 const meta = std.meta;
@@ -93,6 +94,8 @@ test "getPidByName" {
 }
 
 /// Concatenate two runtime-known slices. Caller must free returned slice.
+///
+/// Note: This results in a larger binary than using `std.fmt.allocPrint()`
 pub fn concatRuntime(alloc: mem.Allocator, comptime T: type, arr1: []const T, arr2: []const T) []T {
     var combined = alloc.alloc(T, arr1.len + arr2.len) catch @panic("Out of memory");
     errdefer alloc.free(combined);
@@ -162,7 +165,7 @@ pub fn readFileBytes(allocator: mem.Allocator, file_path: []const u8) ![]const u
 /// I've chosen to stick with #2, for simplicity. But also because I don't feel like re-writing it again. ;)
 ///
 /// TODO: Separate into smaller functions
-pub fn parseMnts(allocator: mem.Allocator, file_contents: []const u8, options: *Options, w: *Io.Writer.Allocating) !OutputParts {
+pub fn parseMnts(allocator: mem.Allocator, file_contents: []const u8, options: *Options, w: *Io.Writer.Allocating) !OutputWaybar {
     var tooltip_bytes: ArrayList(u8) = .empty;
     errdefer tooltip_bytes.deinit(allocator);
 
@@ -179,13 +182,15 @@ pub fn parseMnts(allocator: mem.Allocator, file_contents: []const u8, options: *
 
     // This doesn't need to be a named block, but it's easier to read and helps infer scope.
     parse_entries: {
-        const line_1_fmt = "{s} on {s}\\r";
-        const line_2_fmt = "\\tSize: {d:.2} GiB\\r";
+        const line_1_fmt = "{s} on {s}\r";
+        const line_2_fmt = "\tSize: {d:.2} GiB\r";
+
         var stat: c_sys.struct_statvfs = .{};
 
         var lines_iter = mem.tokenizeScalar(u8, file_contents, '\n');
 
         while (lines_iter.next()) |line| {
+            // NOTE: This might break if mount point contains spaces
             var words_iter = mem.tokenizeScalar(u8, line, ' ');
 
             const dev_name = words_iter.next() orelse break; // fs_spec (dev name - if null, reached end)
@@ -258,8 +263,8 @@ pub fn parseMnts(allocator: mem.Allocator, file_contents: []const u8, options: *
 
                 // Line 3 - Used amount
                 switch (options.*.tooltip_fmt) {
-                    .compact => try w.writer.print("\\tUsed: {d:.2} GiB of {d:.2} GiB ({d:.1}%)\\r", .{ @as(f32, @floatFromInt(used)) / gibi, @as(f32, @floatFromInt(total)) / gibi, used_pcent }),
-                    .normal => try w.writer.print("\\tUsed: {d:.2} GiB ({d:.1}%)\\r\\r", .{ @as(f32, @floatFromInt(used)) / gibi, used_pcent }),
+                    .compact => try w.writer.print("\tUsed: {d:.2} GiB of {d:.2} GiB ({d:.1}%)\r", .{ @as(f32, @floatFromInt(used)) / gibi, @as(f32, @floatFromInt(total)) / gibi, used_pcent }),
+                    .normal => try w.writer.print("\tUsed: {d:.2} GiB ({d:.1}%)\r\r", .{ @as(f32, @floatFromInt(used)) / gibi, used_pcent }),
                 }
                 const ln_3 = try w.toOwnedSlice();
                 errdefer allocator.free(ln_3);
@@ -287,40 +292,40 @@ pub fn parseMnts(allocator: mem.Allocator, file_contents: []const u8, options: *
     const css_class_str: []const u8 = css_class.asSlice();
 
     // Trim trailing whitespace
-    // Number of bytes depends on value of `line_3` in `parse_entries` block of parseMnts(), which ends with 1 or 2 escaped newlines.
-    // Includes extra bytes for escaped `\` in output. (newline = `\\n`)
+    // Number of bytes depends on value of `line_3` in `parse_entries` block of `parseMnts()`, which ends with 1 or 2 newlines depending on chosen tooltip format.
     const n_whitespace_bytes: usize = switch (options.*.tooltip_fmt) {
-        .normal => 4,
-        .compact => 2,
+        .normal => 2,
+        .compact => 1,
     };
     tooltip_bytes.shrinkAndFree(allocator, tooltip_bytes.items.len - n_whitespace_bytes);
 
     const tooltip: []const u8 = try tooltip_bytes.toOwnedSlice(allocator);
 
-    return OutputParts{
+    return OutputWaybar{
         .tooltip = tooltip,
-        .css_class = css_class_str,
-        .root_used_pcent = root_used_pcent,
+        .class = css_class_str,
+        .percentage = root_used_pcent,
     };
 }
 
 /// Contains data that will become parts of final output.
-/// TODO: Rename
-pub const OutputParts = struct {
+pub const OutputWaybar = struct {
+    text: []const u8 = "Storage",
     tooltip: []const u8,
-    css_class: []const u8,
-    root_used_pcent: u8,
+    class: []const u8, // call `CssClass.asSlice()` to get a slice
+    percentage: u8,
 
-    const out_fmt: []const u8 = "{{\"text\":\"Storage\",\"tooltip\":\"{s}\",\"class\":\"{s}\",\"percentage\":{d}}}\n";
+    /// Jsonify and append trailing newline.
+    ///
+    /// ref: https://ziggit.dev/t/zig-0-15-1-reader-writer-dont-make-copies-of-fieldparentptr-based-interfaces/11719
+    pub fn jsonify(self: OutputWaybar, allocator: mem.Allocator, w: *Io.Writer.Allocating) error{ OutOfMemory, WriteFailed }![]const u8 {
+        try json.Stringify.value(self, .{ .whitespace = .minified }, &w.writer);
+        const s = try w.toOwnedSlice();
+        defer allocator.free(s);
 
-    /// Assemble final json output, from given data.
-    pub fn assemble(self: OutputParts, alloc: mem.Allocator) error{OutOfMemory}![]const u8 {
-        var output: ArrayList(u8) = .empty;
-        errdefer output.deinit(alloc);
-
-        try output.print(alloc, out_fmt, .{ self.tooltip, self.css_class, self.root_used_pcent });
-
-        return output.toOwnedSlice(alloc);
+        // Append a trailing newline. Waybar seems to break without one.
+        const out = try fmt.allocPrint(allocator, "{s}\n", .{s});
+        return out;
     }
 };
 
