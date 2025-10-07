@@ -224,18 +224,19 @@ pub fn parseMnts(allocator: mem.Allocator, file_contents: []const u8, options: *
             const rc = c_sys.statvfs(mount_point_z.ptr, &stat);
             if (rc != 0) continue; // 0 = Failure, skip to next entry
 
+            // Check if `f_type` is in `ignored_ftypes` enum, and if so, skip to next iteration
+            const f_type: c_uint = stat.f_type;
+            if (ignored_ftypes.fromCInt(f_type) != null) continue;
+
+            // Calculate total usage of this filesystem
             const total: c_ulong = stat.f_blocks * stat.f_frsize;
+            if (total == 0) continue; // Skip to next entry if zero size (most vfs entries).
             const free: c_ulong = stat.f_bfree * stat.f_frsize;
             const used: c_ulong = total - free;
-            const f_type: c_uint = stat.f_type;
 
             // TODO: Parse mount flags (stat.f_flag, bitmask)
             // const flags = stat.f_flag;
 
-            // // Check if `f_type` is in `ignored_ftypes` enum, and if so, skip to next iteration
-            if (ignored_ftypes.fromCInt(f_type) != null) continue;
-
-            if (total == 0) continue; // Skip to next entry if zero size (vfs entries).
             const used_pcent: f32 = (@as(f32, @floatFromInt(used)) / @as(f32, @floatFromInt(total))) * 100;
 
             assert(0 <= used_pcent and used_pcent <= 100); // Percentage calculated incorrectly
@@ -403,14 +404,14 @@ pub const Options = struct {
         _ = args.next() orelse return; // Discard program name
 
         // Parse tooltip format
-        const arg_tooltip_fmt: [:0]const u8 = args.next() orelse return; // Abort if not given
-        const tooltip_fmt: []const u8 = mem.span(arg_tooltip_fmt.ptr);
-        self.*.tooltip_fmt = meta.stringToEnum(TooltipFmt, tooltip_fmt) orelse return error.InvalidOption;
+        const arg_1: [:0]const u8 = args.next() orelse return; // Abort if not given
+        const tooltip_fmt_str: []const u8 = mem.span(arg_1.ptr);
+        self.*.tooltip_fmt = meta.stringToEnum(TooltipFmt, tooltip_fmt_str) orelse return error.InvalidOption;
 
         // Parse language
         // TODO: Implement translation(s)
-        const arg_lang: [:0]const u8 = args.next() orelse return; // Abort if not given
-        const lang_str: []const u8 = mem.span(arg_lang.ptr);
+        const arg_2: [:0]const u8 = args.next() orelse return; // Abort if not given
+        const lang_str: []const u8 = mem.span(arg_2.ptr);
         self.*.lang = meta.stringToEnum(Lang, lang_str) orelse return error.InvalidOption;
 
         return;
