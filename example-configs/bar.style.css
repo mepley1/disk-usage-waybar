@@ -9,8 +9,7 @@
 @define-color darkStrongYellow #FABD2F;
 
 * {
-    font-size: 16px;
-    font-family: "Iosevka", "Titillium Web", "Ubuntu Sans Mono";
+    font-size: 18px;
 }
 
 window#waybar {
@@ -19,7 +18,7 @@ window#waybar {
 }
 
 /*  Add some padding */
-.module{
+.module {
     padding: 8px 16px;
     margin: 0px 8px;
 }
@@ -38,6 +37,7 @@ window#waybar {
 #custom-disk-usage.high {
     color: @darkMutedRed;
 }
-#custom-disk-usage.critical, #custom-disk-usage.err {
+#custom-disk-usage.critical,
+#custom-disk-usage.err {
     color: @darkStrongRed;
 }
