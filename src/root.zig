@@ -429,9 +429,26 @@ pub const Options = struct {
 };
 
 /// Filesystem types we don't care about, i.e. vfs etc.
+/// see: https://man7.org/linux/man-pages/man2/statfs.2.html
 const ignored_ftypes = enum(c_uint) {
-    tmpfs = 16914836,
-    efivarfs = 3730735588,
+    autofs = 0x0187,
+    binfmtfs = 0x42494e4d,
+    bpf = 0xcafe4a11,
+    cgroup = 0x27e0eb,
+    cgroup2 = 0x63677270,
+    configfs = 0x62656570,
+    debugfs = 0x64626720,
+    devpts = 0x1cd1,
+    efivarfs = 0xde5e81e4,
+    fusectl = 0x65735543,
+    hugetlbfs = 0x958458f6,
+    mqueue = 0x19800202,
+    proc = 0x9fa0,
+    pstore = 0x6165676c,
+    securityfs = 0x73636673,
+    sysfs = 0x62656572,
+    tmpfs = 0x01021994,
+    tracefs = 0x74726163,
 
     /// If given `f_type` is a member of this enum, return its enum value; else, return null.
     /// `f_type` is in the result of `statvfs()` call.
