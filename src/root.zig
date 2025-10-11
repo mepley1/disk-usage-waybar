@@ -22,6 +22,8 @@ const c_sys = @cImport({
 pub const gibi = 1_073_741_824; // 1024^3
 pub const kibi = 1024;
 
+const stat_has_ftype: bool = @hasField(c_sys.struct_statvfs, "f_type");
+
 /// Same as `std.debug.assert`
 pub fn assert(ok: bool) void {
     if (!ok) unreachable; // assertion failure
@@ -210,32 +212,31 @@ pub fn parseMnts(allocator: mem.Allocator, file_contents: []const u8, options: *
             assert(mount_point.len <= fs.max_path_bytes);
             for (mount_point) |c| assert(std.ascii.isPrint(c));
 
-            // const fs_type = words_iter.next() orelse continue; // 3rd word
+            const fs_type_fallback = words_iter.next() orelse continue; // 3rd word
 
-            // var to_break: bool = false;
-            // for (ignored_types) |t| {
-            //     if (std.mem.eql(u8, fs_type, t)) {
-            //         to_break = true;
-            //     }
-            // }
-            // if (to_break) continue;
+            // TODO: Parse flags and keep important ones to display in tooltip
+            // const flags = words_iter.next().?; // 4th word - mount flags
 
             // Call `statvfs` on the mount point
             const rc = c_sys.statvfs(mount_point_z.ptr, &stat);
             if (rc != 0) continue; // 0 = Failure, skip to next entry
 
             // Check if `f_type` is in `ignored_ftypes` enum, and if so, skip to next iteration
-            const f_type: c_uint = stat.f_type;
-            if (ignored_ftypes.fromCInt(f_type) != null) continue;
+            // If `struct_statvfs.f_type` field doesn't exist, fall back to fs type from `/proc/mounts`
+            var to_skip = false;
+            if (stat_has_ftype) {
+                const f_type: c_uint = stat.f_type;
+                if (ignored_ftypes.fromCInt(f_type) != null) to_skip = true;
+            } else {
+                if (ignored_ftypes.hasField(fs_type_fallback)) to_skip = true;
+            }
+            if (to_skip) continue;
 
             // Calculate total usage of this filesystem
             const total: c_ulong = stat.f_blocks * stat.f_frsize;
             if (total == 0) continue; // Skip to next entry if zero size (most vfs entries).
             const free: c_ulong = stat.f_bfree * stat.f_frsize;
             const used: c_ulong = total - free;
-
-            // TODO: Parse mount flags (stat.f_flag, bitmask)
-            // const flags = stat.f_flag;
 
             const used_pcent: f32 = (@as(f32, @floatFromInt(used)) / @as(f32, @floatFromInt(total))) * 100;
 
@@ -280,6 +281,17 @@ pub fn parseMnts(allocator: mem.Allocator, file_contents: []const u8, options: *
 
                 try tooltip_bytes.appendSlice(allocator, ln_3);
                 try need_freed.append(allocator, ln_3);
+
+                // Line 4 - Flags
+                // TODO: For future usage
+                // if (options.*.tooltip_fmt == .normal) {
+                //     try w.writer.print("\tFlags: {s}\r\r", .{flags});
+                //     const ln_4 = try w.toOwnedSlice();
+                //     errdefer allocator.free(ln_4);
+
+                //     try tooltip_bytes.appendSlice(allocator, ln_4);
+                //     try need_freed.append(allocator, ln_4);
+                // }
 
                 break :append_tooltip;
             }
@@ -428,17 +440,50 @@ pub const Options = struct {
     };
 };
 
-/// Filesystem types we don't care about, i.e. vfs etc.
+/// Magic numbers for filesystem types we don't care about, i.e. vfs etc
+///
+/// TODO: It might be easier to instead keep a list of types we DO want.
+///
+/// For a list of magic numbers, see: https://man7.org/linux/man-pages/man2/statfs.2.html
 const ignored_ftypes = enum(c_uint) {
-    tmpfs = 16914836,
-    efivarfs = 3730735588,
+    autofs = 0x0187,
+    binfmtfs = 0x42494e4d,
+    binfmt_misc, // Dupe of binfmtfs - for compatibility with `.hasField()` fallback method
+    bpf = 0xcafe4a11,
+    cgroup = 0x27e0eb,
+    cgroup2 = 0x63677270,
+    configfs = 0x62656570,
+    debugfs = 0x64626720,
+    devfs = 0x1373,
+    devpts = 0x1cd1,
+    devtmpfs, // Dupe of tmpfs - for compatibility with `.hasField()` fallback
+    efivarfs = 0xde5e81e4,
+    fusectl = 0x65735543,
+    hugetlbfs = 0x958458f6,
+    mqueue = 0x19800202,
+    proc = 0x9fa0,
+    pstore = 0x6165676c,
+    securityfs = 0x73636673,
+    sysfs = 0x62656572,
+    tmpfs = 0x01021994,
+    tracefs = 0x74726163,
 
-    /// If given `f_type` is a member of this enum, return its enum value; else, return null.
-    /// `f_type` is in the result of `statvfs()` call.
-    ///
-    /// Thus, this function indirectly depends on libc
+    /// If given `f_type` magic number is a member of this enum, return its enum value; else, return null.
+    /// `f_type` is the value of field `.f_type` in the result of `statvfs()` call.
     fn fromCInt(f_type: c_uint) ?ignored_ftypes {
         return enums.fromInt(ignored_ftypes, f_type) orelse null;
+    }
+
+    /// Check if field `name` is a member of this enum.
+    /// Fallback for systems where `struct_statvfs` does not include `.f_type` field and thus can't use `.fromCInt()`.
+    ///
+    /// This is inefficient; prefer to use `.fromCInt()` when possible.
+    fn hasField(name: []const u8) bool {
+        inline for (meta.fields(ignored_ftypes)) |field| {
+            if (mem.eql(u8, field.name, name))
+                return true;
+        }
+        return false;
     }
 };
 
@@ -446,6 +491,35 @@ test "ignored_ftypes" {
     try std.testing.expect(ignored_ftypes.fromCInt(@as(c_uint, 1)) == null);
     try std.testing.expect(ignored_ftypes.fromCInt(@as(c_uint, 16914836)) == .tmpfs);
     try std.testing.expect(ignored_ftypes.fromCInt(@as(c_uint, 3730735588)) == .efivarfs);
+
+    try std.testing.expect(ignored_ftypes.hasField("tmpfs"));
+    try std.testing.expect(ignored_ftypes.hasField("nonexistent") == false);
 }
 
-// const ignored_types = &[_][]const u8{ "proc", "tmpfs", "sys", "bpf", "mqueue", "debugfs", "tracefs", "securityfs", "devpts", "devtmpfs", "efivarfs", "cgroup2", "sysfs", "-", "hugetlbfs", "configfs", "fusectl", "binfmt_misc", "pstore", "autofs", "fuse.portal" };
+// /// Deprecated
+// const ignored_types = &[_][]const u8{
+//     "-",
+//     "autofs",
+//     "binfmtfs",
+//     "binfmt_misc",
+//     "bpf",
+//     "cgroup",
+//     "cgroup2",
+//     "configfs",
+//     "debugfs",
+//     "devfs",
+//     "devpts",
+//     "devtmpfs",
+//     "efivarfs",
+//     "fuse.portal",
+//     "fusectl",
+//     "hugetlbfs",
+//     "mqueue",
+//     "proc",
+//     "pstore",
+//     "securityfs",
+//     "sys",
+//     "sysfs",
+//     "tmpfs",
+//     "tracefs",
+// };
