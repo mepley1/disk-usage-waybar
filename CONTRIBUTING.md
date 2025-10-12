@@ -6,11 +6,13 @@ Pull requests are always welcome. You probably want to file an issue first, to a
 
 Some minimal guidelines for contributing. These may be loosely followed or totally ignored - any code is better than no code.
 
-These are just personal preferences, not hard rules; reading them might help you to reason about my code. I won't turn down a PR just for not following them.
+These are just personal preferences, not hard rules; reading them might help you to reason about my code. 
+I won't turn down a PR just for not following them.
 
 - Follow [Tiger Style](https://github.com/tigerbeetle/tigerbeetle/blob/main/docs/TIGER_STYLE.md) as closely as possible.
-- All functions should include a doc comment.
-- Code comments are fine, I'm not a comment hater. But if the comment could be replaced with an assertion, do so. Which leads me to my next guideline...
+- Any functions should include a brief doc comment listing any known footguns or gotchas.
+- Code comments are fine, I'm not a comment hater. 
+    - If the comment could be replaced with an assertion, do so.
 - There is no such thing as too many assertions. Feel free to spam them.
     - If a value will always fall within a smaller subrange of its type's possible values, assert it. (or use an enum if practical)
         - i.e. if an integer `i` will always be greater than 5, then `assert(i > 5)` as early as possible, or before operating on it.

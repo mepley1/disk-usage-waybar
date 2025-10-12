@@ -3,21 +3,34 @@
 //! Zig 0.15.1
 
 const std = @import("std");
+const lib = @import("wbmod-utils"); // root.zig
+
+const ArrayList = std.ArrayList;
+const enums = std.enums;
+const fs = std.fs;
 const heap = std.heap;
 const Io = std.Io;
+const mem = std.mem;
+const meta = std.meta;
+const process = std.process;
 const Thread = std.Thread;
 const time = std.time;
 
-const lib = @import("disk-usage-monitor-waybar"); // root.zig
+const c_sys = @cImport({
+    @cInclude("sys/statvfs.h");
+});
 
-const MOUNTS_PATH: []const u8 = "/proc/mounts";
 const UPDATE_INTERVAL: u64 = 20 * time.ns_per_s;
+const SIG_N: u8 = 16;
+const MOUNTS_PATH: []const u8 = "/proc/mounts";
+
+const stat_has_ftype: bool = @hasField(c_sys.struct_statvfs, "f_type");
 
 pub fn main() !void {
     const c_allocator = heap.raw_c_allocator;
 
     // Parse command line options
-    var options = lib.Options{};
+    var options = Options{};
     try options.read();
 
     while (true) {
@@ -34,7 +47,7 @@ pub fn main() !void {
             defer allocator.free(file_contents);
 
             // Parse contents to get the data we're interested in
-            const output_parts: lib.OutputWaybar = try lib.parseMnts(allocator, file_contents, &options, &w);
+            const output_parts: lib.OutputWaybar = try parseMnts(allocator, file_contents, &options, &w);
             defer allocator.free(output_parts.tooltip);
 
             // Format final output
@@ -50,7 +63,7 @@ pub fn main() !void {
             const pid = try lib.getPidByName("waybar");
             if (pid) |p| {
                 @branchHint(.likely);
-                try lib.rtSig(p, 16);
+                try lib.rtSig(p, SIG_N);
             }
 
             break :update;
@@ -59,3 +72,299 @@ pub fn main() !void {
         Thread.sleep(UPDATE_INTERVAL);
     }
 }
+
+/// Parse mounts file contents, stat each mountpoint, return the interesting data.
+/// Caller must free `result.tooltip`.
+///
+/// `file_contents` expects the contents of `/proc/mounts`.
+///
+/// I've tried 2 different memory models for creating tooltip text:
+///
+/// - Add each line of text created to an `ArrayList([]const u8)`, then move all to a final `[]u8` slice (freeing each allocated line immediately after it's copied), and return owned slice. This involves a little more code.
+///
+/// - Append each line as *bytes* directly to an `ArrayList(u8)` (using `.appendSlice`), and return owned slice of its `.items` (skip the intermediate list).
+///
+/// The second option results in a slightly higher PEAK heap usage towards end of run, but for most of runtime, total usage is lower. Requires tracking allocations in a second list of slices to be freed, if not using arena.
+///
+/// I've chosen to stick with #2, for simplicity. But also because I don't feel like re-writing it again. ;)
+///
+/// TODO: Separate into smaller functions
+fn parseMnts(allocator: mem.Allocator, file_contents: []const u8, options: *Options, w: *Io.Writer.Allocating) !lib.OutputWaybar {
+    var tooltip_bytes: ArrayList(u8) = .empty;
+    errdefer tooltip_bytes.deinit(allocator);
+
+    // 1.) Maintain references to output lines that still need freed after being copied to `tooltip_bytes`
+    var need_freed: ArrayList([]const u8) = .empty;
+    defer need_freed.deinit(allocator);
+    // 2.) and free them:
+    defer for (need_freed.items) |line| {
+        allocator.free(line[0..]);
+    };
+
+    // Percentage used of root mount (`/`).
+    var root_used_pcent: u8 = 0;
+
+    // This doesn't need to be a named block, but it's easier to read and helps infer scope.
+    parse_entries: {
+        const line_1_fmt = "{s} on {s}\r";
+        const line_2_fmt = "\tSize: {d:.2} GiB\r";
+
+        var stat: c_sys.struct_statvfs = .{};
+
+        var lines_iter = mem.tokenizeScalar(u8, file_contents, '\n');
+
+        while (lines_iter.next()) |line| {
+            // NOTE: This might break if mount point contains spaces
+            var words_iter = mem.tokenizeScalar(u8, line, ' ');
+
+            const dev_name = words_iter.next() orelse break; // fs_spec (dev name - if null, reached end)
+
+            const mount_point = words_iter.next().?; // 2nd "word"
+            const mount_point_z = try allocator.dupeZ(u8, mount_point);
+            defer allocator.free(mount_point_z);
+
+            lib.assert(mount_point.len <= fs.max_path_bytes);
+            for (mount_point) |c| lib.assert(std.ascii.isPrint(c));
+
+            const fs_type_fallback = words_iter.next() orelse continue; // 3rd word
+
+            // TODO: Parse flags and keep important ones to display in tooltip
+            // const flags = words_iter.next().?; // 4th word - mount flags
+
+            // Call `statvfs` on the mount point
+            const rc = c_sys.statvfs(mount_point_z.ptr, &stat);
+            if (rc != 0) continue; // 0 = Failure, skip to next entry
+
+            // Check if `f_type` is in `ignored_ftypes` enum, and if so, skip to next iteration
+            // If `struct_statvfs.f_type` field doesn't exist, fall back to fs type from `/proc/mounts`
+            var to_skip = false;
+            if (stat_has_ftype) {
+                const f_type: c_uint = stat.f_type;
+                if (ignored_ftypes.fromCInt(f_type) != null) to_skip = true;
+            } else {
+                if (ignored_ftypes.hasField(fs_type_fallback)) to_skip = true;
+            }
+            if (to_skip) continue;
+
+            // Calculate total usage of this filesystem
+            const total: c_ulong = stat.f_blocks * stat.f_frsize;
+            if (total == 0) continue; // Skip to next entry if zero size (most vfs entries).
+            const free: c_ulong = stat.f_bfree * stat.f_frsize;
+            const used: c_ulong = total - free;
+
+            const used_pcent: f32 = (@as(f32, @floatFromInt(used)) / @as(f32, @floatFromInt(total))) * 100;
+
+            lib.assert(0 <= used_pcent and used_pcent <= 100); // Percentage calculated incorrectly
+
+            // Save root mount (`/`) used %, when we come across its entry.
+            if (mem.eql(u8, mount_point_z, "/")) {
+                root_used_pcent = @intFromFloat(used_pcent); // Rounded towards zero
+                lib.assert(0 <= root_used_pcent and root_used_pcent <= 100); // Percentage calculated incorrectly
+            }
+
+            append_tooltip: {
+
+                // ## Assemble tooltip paragraph for this filesystem, line by line, appending each to `tooltip_bytes`
+
+                // Line 1 - dev name + mountpoint
+                try w.writer.print(line_1_fmt, .{ dev_name, mount_point_z });
+                const ln_1 = try w.toOwnedSlice();
+                errdefer allocator.free(ln_1);
+
+                try tooltip_bytes.appendSlice(allocator, ln_1);
+                try need_freed.append(allocator, ln_1);
+
+                // Line 2 - total size
+                // Only include if format=.normal -- Skip if .compact
+                if (options.*.tooltip_fmt == .normal) {
+                    try w.writer.print(line_2_fmt, .{@as(f32, @floatFromInt(total)) / lib.gibi});
+                    const ln_2 = try w.toOwnedSlice();
+                    errdefer allocator.free(ln_2);
+
+                    try tooltip_bytes.appendSlice(allocator, ln_2);
+                    try need_freed.append(allocator, ln_2);
+                }
+
+                // Line 3 - Used amount
+                switch (options.*.tooltip_fmt) {
+                    .compact => try w.writer.print("\tUsed: {d:.2} GiB of {d:.2} GiB ({d:.1}%)\r", .{ @as(f32, @floatFromInt(used)) / lib.gibi, @as(f32, @floatFromInt(total)) / lib.gibi, used_pcent }),
+                    .normal => try w.writer.print("\tUsed: {d:.2} GiB ({d:.1}%)\r\r", .{ @as(f32, @floatFromInt(used)) / lib.gibi, used_pcent }),
+                }
+                const ln_3 = try w.toOwnedSlice();
+                errdefer allocator.free(ln_3);
+
+                try tooltip_bytes.appendSlice(allocator, ln_3);
+                try need_freed.append(allocator, ln_3);
+
+                // Line 4 - Flags
+                // TODO: For future usage
+                // if (options.*.tooltip_fmt == .normal) {
+                //     try w.writer.print("\tFlags: {s}\r\r", .{flags});
+                //     const ln_4 = try w.toOwnedSlice();
+                //     errdefer allocator.free(ln_4);
+
+                //     try tooltip_bytes.appendSlice(allocator, ln_4);
+                //     try need_freed.append(allocator, ln_4);
+                // }
+
+                break :append_tooltip;
+            }
+        }
+
+        lib.assert(tooltip_bytes.items.len > 0); // Failed reading or parsing mounts
+
+        break :parse_entries;
+    }
+
+    const css_class: lib.CssClass = switch (root_used_pcent) {
+        0...49 => .low,
+        50...74 => .medium,
+        75...89 => .high,
+        90...100 => .critical,
+        else => unreachable,
+    };
+
+    const css_class_str: []const u8 = css_class.asSlice();
+
+    // Trim trailing whitespace
+    // Number of bytes depends on value of `line_3` in `parse_entries` block of `parseMnts()`, which ends with 1 or 2 newlines depending on chosen tooltip format.
+    const n_whitespace_bytes: usize = switch (options.*.tooltip_fmt) {
+        .normal => 2,
+        .compact => 1,
+    };
+    tooltip_bytes.shrinkAndFree(allocator, tooltip_bytes.items.len - n_whitespace_bytes);
+
+    const tooltip: []const u8 = try tooltip_bytes.toOwnedSlice(allocator);
+
+    return lib.OutputWaybar{
+        .tooltip = tooltip,
+        .class = css_class_str,
+        .percentage = root_used_pcent,
+    };
+}
+
+/// Command line options
+///
+/// TODO: Use an arg parsing lib so I can add more options.
+const Options = struct {
+    tooltip_fmt: TooltipFmt = .normal,
+    lang: Lang = .en,
+
+    const Self = @This();
+
+    /// Read command line options and adjust values accordingly
+    fn read(self: *Self) error{InvalidOption}!void {
+        var args = process.args();
+        _ = args.next() orelse return; // Discard program name
+
+        // Parse tooltip format
+        const arg_1: [:0]const u8 = args.next() orelse return; // Abort if not given
+        const tooltip_fmt_str: []const u8 = mem.span(arg_1.ptr);
+        self.*.tooltip_fmt = meta.stringToEnum(TooltipFmt, tooltip_fmt_str) orelse return error.InvalidOption;
+
+        // Parse language
+        // TODO: Implement translation(s)
+        const arg_2: [:0]const u8 = args.next() orelse return; // Abort if not given
+        const lang_str: []const u8 = mem.span(arg_2.ptr);
+        self.*.lang = meta.stringToEnum(Lang, lang_str) orelse return error.InvalidOption;
+
+        return;
+    }
+
+    const TooltipFmt = enum(u8) {
+        normal = 0,
+        compact = 1,
+    };
+
+    const Lang = enum(u8) {
+        en = 0,
+        de = 1,
+    };
+};
+
+/// Magic numbers for filesystem types we don't care about, i.e. vfs etc
+///
+/// TODO: It might be easier to instead keep a list of types we DO want.
+///
+/// For a list of magic numbers, see: https://man7.org/linux/man-pages/man2/statfs.2.html
+const ignored_ftypes = enum(c_uint) {
+    autofs = 0x0187,
+    binfmtfs = 0x42494e4d,
+    binfmt_misc, // Dupe of binfmtfs - for compatibility with `.hasField()` fallback method
+    bpf = 0xcafe4a11,
+    cgroup = 0x27e0eb,
+    cgroup2 = 0x63677270,
+    configfs = 0x62656570,
+    debugfs = 0x64626720,
+    devfs = 0x1373,
+    devpts = 0x1cd1,
+    devtmpfs, // Dupe of tmpfs - for compatibility with `.hasField()` fallback
+    efivarfs = 0xde5e81e4,
+    fusectl = 0x65735543,
+    hugetlbfs = 0x958458f6,
+    mqueue = 0x19800202,
+    nsfs = 0x6e736673,
+    proc = 0x9fa0,
+    pstore = 0x6165676c,
+    ramfs = 0x858458f6,
+    securityfs = 0x73636673,
+    squashfs = 0x73717368,
+    sysfs = 0x62656572,
+    tmpfs = 0x01021994,
+    tracefs = 0x74726163,
+
+    /// If given `f_type` magic number is a member of this enum, return its enum value; else, return null.
+    /// `f_type` is the value of field `.f_type` in the result of `statvfs()` call.
+    fn fromCInt(f_type: c_uint) ?ignored_ftypes {
+        return enums.fromInt(ignored_ftypes, f_type) orelse null;
+    }
+
+    /// Check if field `name` is a member of this enum.
+    /// Fallback for systems where `struct_statvfs` does not include `.f_type` field and thus can't use `.fromCInt()`.
+    ///
+    /// This is inefficient; prefer to use `.fromCInt()` when possible.
+    fn hasField(name: []const u8) bool {
+        inline for (meta.fields(ignored_ftypes)) |field| {
+            if (mem.eql(u8, field.name, name))
+                return true;
+        }
+        return false;
+    }
+};
+
+test "ignored_ftypes" {
+    try std.testing.expect(ignored_ftypes.fromCInt(@as(c_uint, 1)) == null);
+    try std.testing.expect(ignored_ftypes.fromCInt(@as(c_uint, 16914836)) == .tmpfs);
+    try std.testing.expect(ignored_ftypes.fromCInt(@as(c_uint, 3730735588)) == .efivarfs);
+
+    try std.testing.expect(ignored_ftypes.hasField("tmpfs"));
+    try std.testing.expect(ignored_ftypes.hasField("nonexistent") == false);
+}
+
+// /// Deprecated
+// const ignored_types = &[_][]const u8{
+//     "-",
+//     "autofs",
+//     "binfmtfs",
+//     "binfmt_misc",
+//     "bpf",
+//     "cgroup",
+//     "cgroup2",
+//     "configfs",
+//     "debugfs",
+//     "devfs",
+//     "devpts",
+//     "devtmpfs",
+//     "efivarfs",
+//     "fuse.portal",
+//     "fusectl",
+//     "hugetlbfs",
+//     "mqueue",
+//     "proc",
+//     "pstore",
+//     "securityfs",
+//     "sys",
+//     "sysfs",
+//     "tmpfs",
+//     "tracefs",
+// };

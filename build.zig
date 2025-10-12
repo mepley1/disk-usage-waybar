@@ -6,10 +6,9 @@ pub fn build(b: *std.Build) void {
     const optimize = b.standardOptimizeOption(.{});
 
     const mod = b.addModule(
-        "disk-usage-monitor-waybar",
+        "wbmod-utils",
         .{
             .root_source_file = b.path("src/root.zig"),
-
             .target = target,
         },
     );
@@ -18,12 +17,10 @@ pub fn build(b: *std.Build) void {
         .name = "disk-usage-monitor-waybar",
         .root_module = b.createModule(.{
             .root_source_file = b.path("src/main.zig"),
-
             .target = target,
             .optimize = optimize,
-
             .imports = &.{
-                .{ .name = "disk-usage-monitor-waybar", .module = mod },
+                .{ .name = "wbmod-utils", .module = mod },
             },
         }),
     });
