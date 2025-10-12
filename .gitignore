@@ -15,3 +15,8 @@ vgcore.*
 /tmp
 translations.txt
 *.bak
+
+# deprecated - temp
+bitmask.zig
+getpass.zig
+getpass
