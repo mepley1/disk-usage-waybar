@@ -10,8 +10,6 @@
     - Allow to format as either `RTMIN + n` or explicit `n`
     - Assert between 32-64
 
-- Organization: Move everything that's *specific to this module* to `main.zig`; let `root.zig` contain only helper/shareable functions that can be used by other future modules.
-
 - Issue: `statvfs()` may hang on network filesystems. Skip filesystem if `_netdev` mount flag found?
 
 - Refactor: Use one of the existing arg parsing libs, so I can add more planned options.
