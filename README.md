@@ -11,7 +11,7 @@ Updates every 20sec.
 
 # Build
 
-Requires Zig `0.15.1` (writergate).
+Requires Zig `0.15.x`.
 
 Depends on libc for `sys/statvfs.h`.
 
@@ -49,7 +49,7 @@ After compiling, place the executable somewhere that's in Waybar's `PATH`, I pre
 
 ## Config
 
-First, add it to your waybar config and configure however you want it. An example is included in `example-configs/waybarloop.conf`.
+First, add it to your waybar config and configure however you want it. An example is included in `example-configs/bar.conf`.
 
 ```jsonc
 "modules-right": [
