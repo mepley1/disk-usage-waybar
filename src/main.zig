@@ -135,14 +135,14 @@ fn parseMnts(allocator: mem.Allocator, file_contents: []const u8, options: *Opti
             const rc = c_sys.statvfs(mount_point_z.ptr, &stat);
             if (rc != 0) continue; // 0 = Failure, skip to next entry
 
-            // Check if `f_type` is in `ignored_ftypes` enum, and if so, skip to next iteration
+            // Check if `f_type` is in `MagicNums` enum, and if so, skip to next iteration
             // If `struct_statvfs.f_type` field doesn't exist, fall back to fs type from `/proc/mounts`
             var to_skip = false;
             if (stat_has_ftype) {
                 const f_type: c_uint = stat.f_type;
-                if (ignored_ftypes.fromCInt(f_type) != null) to_skip = true;
+                if (MagicNums.fromCInt(f_type) != null) to_skip = true;
             } else {
-                if (ignored_ftypes.hasField(fs_type_fallback)) to_skip = true;
+                if (MagicNums.hasField(fs_type_fallback)) to_skip = true;
             }
             if (to_skip) continue;
 
@@ -284,10 +284,10 @@ const Options = struct {
 
 /// Magic numbers for filesystem types we don't care about, i.e. vfs etc
 ///
-/// TODO: It might be easier to instead keep a list of types we DO want.
+/// TODO: It might be easier to instead keep a list of filesystems we DO want.
 ///
 /// For a list of magic numbers, see: https://man7.org/linux/man-pages/man2/statfs.2.html
-const ignored_ftypes = enum(c_uint) {
+const MagicNums = enum(c_uint) {
     autofs = 0x0187,
     binfmtfs = 0x42494e4d,
     binfmt_misc, // Dupe of binfmtfs - for compatibility with `.hasField()` fallback method
@@ -315,10 +315,19 @@ const ignored_ftypes = enum(c_uint) {
     tmpfs = 0x01021994,
     tracefs = 0x74726163,
 
-    /// If given `f_type` magic number is a member of this enum, return its enum value; else, return null.
-    /// `f_type` is the value of field `.f_type` in the result of `statvfs()` call.
-    fn fromCInt(f_type: c_uint) ?ignored_ftypes {
-        return enums.fromInt(ignored_ftypes, f_type) orelse null;
+    /// Filesystems we definitely want to keep
+    /// TODO: Incomplete. For future use.
+    const good = enum(c_uint) {
+        ext4 = 0xef53,
+        fuseblk = 0x65735546, // fuse mounts - NTFS etc
+        @"fuse.portal" = 0x65735546, // duplicate of fuseblk
+    };
+
+    /// If given `f_type` magic number is a member of this enum, return its enum value; otherwise return null.
+    ///
+    /// `f_type` is the value of field `.f_type` in the resulting `struct_statvfs` of libc's `statvfs()` call. If the current system does not include `.f_type` in `struct_statvfs` (checked at compile time), then `hasField()` method will be called instead of this one.
+    fn fromCInt(f_type: c_uint) ?MagicNums {
+        return enums.fromInt(MagicNums, f_type) orelse null;
     }
 
     /// Check if field `name` is a member of this enum.
@@ -326,7 +335,7 @@ const ignored_ftypes = enum(c_uint) {
     ///
     /// This is inefficient; prefer to use `.fromCInt()` when possible.
     fn hasField(name: []const u8) bool {
-        inline for (meta.fields(ignored_ftypes)) |field| {
+        inline for (meta.fields(MagicNums)) |field| {
             if (mem.eql(u8, field.name, name))
                 return true;
         }
@@ -334,13 +343,13 @@ const ignored_ftypes = enum(c_uint) {
     }
 };
 
-test "ignored_ftypes" {
-    try std.testing.expect(ignored_ftypes.fromCInt(@as(c_uint, 1)) == null);
-    try std.testing.expect(ignored_ftypes.fromCInt(@as(c_uint, 16914836)) == .tmpfs);
-    try std.testing.expect(ignored_ftypes.fromCInt(@as(c_uint, 3730735588)) == .efivarfs);
+test "MagicNums" {
+    try std.testing.expect(MagicNums.fromCInt(@as(c_uint, 1)) == null);
+    try std.testing.expect(MagicNums.fromCInt(@as(c_uint, 16914836)) == .tmpfs);
+    try std.testing.expect(MagicNums.fromCInt(@as(c_uint, 3730735588)) == .efivarfs);
 
-    try std.testing.expect(ignored_ftypes.hasField("tmpfs"));
-    try std.testing.expect(ignored_ftypes.hasField("nonexistent") == false);
+    try std.testing.expect(MagicNums.hasField("tmpfs"));
+    try std.testing.expect(MagicNums.hasField("nonexistent") == false);
 }
 
 // /// Deprecated
