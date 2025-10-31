@@ -106,7 +106,7 @@ fn parseMnts(allocator: mem.Allocator, file_contents: []const u8, options: *Opti
 
     // This doesn't need to be a named block, but it's easier to read and helps infer scope.
     parse_entries: {
-        const line_1_fmt = "{s} on {s}\r";
+        const line_1_fmt = "{s} on {s} ({s})\r";
         const line_2_fmt = "\tSize: {d:.2} GiB\r";
 
         var stat: c_sys.struct_statvfs = .{};
@@ -167,7 +167,7 @@ fn parseMnts(allocator: mem.Allocator, file_contents: []const u8, options: *Opti
                 // ## Assemble tooltip paragraph for this filesystem, line by line, appending each to `tooltip_bytes`
 
                 // Line 1 - dev name + mountpoint
-                try w.writer.print(line_1_fmt, .{ dev_name, mount_point_z });
+                try w.writer.print(line_1_fmt, .{ dev_name, mount_point, fs_type_fallback });
                 const ln_1 = try w.toOwnedSlice();
                 errdefer allocator.free(ln_1);
 
