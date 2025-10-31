@@ -299,7 +299,9 @@ const ignored_ftypes = enum(c_uint) {
     devfs = 0x1373,
     devpts = 0x1cd1,
     devtmpfs, // Dupe of tmpfs - for compatibility with `.hasField()` fallback
+    dwarfs,
     efivarfs = 0xde5e81e4,
+    @"fuse.dwarfs",
     fusectl = 0x65735543,
     hugetlbfs = 0x958458f6,
     mqueue = 0x19800202,
