@@ -3,7 +3,7 @@
 A storage monitoring Waybar module. Displays a summary of disk usage for each mounted fs.
 
 Reads currently mounted filesystems from `/proc/mounts`, and outputs a summary in a Waybar-compatible JSON format.
-Updates every 20sec.
+Updates every 10sec.
 
 ### Demo:
 
