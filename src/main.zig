@@ -20,7 +20,7 @@ const c_sys = @cImport({
     @cInclude("sys/statvfs.h");
 });
 
-const UPDATE_INTERVAL: u64 = 20 * time.ns_per_s;
+const UPDATE_INTERVAL: u64 = 10 * time.ns_per_s;
 const SIG_N: u8 = 16;
 const MOUNTS_PATH: []const u8 = "/proc/mounts";
 
