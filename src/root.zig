@@ -153,7 +153,7 @@ pub fn readFileBytes(allocator: mem.Allocator, file_path: []const u8) ![]const u
 
 /// Contains data that will become parts of final output.
 pub const OutputWaybar = struct {
-    text: []const u8 = "Storage",
+    text: []const u8 = "🖴",
     tooltip: []const u8,
     class: []const u8, // call `CssClass.asSlice()` to get a slice
     percentage: u8,
