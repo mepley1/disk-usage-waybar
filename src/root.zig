@@ -51,6 +51,7 @@ pub fn rtSig(pid: linux.pid_t, n: u8) !void {
     assert(pid > 0);
     assert(n <= 32);
     const sig = linux.sigrtmin() + n;
+    assert(sig >= 34);
     assert(sig <= linux.sigrtmax());
     try posix.kill(pid, sig);
     return;
@@ -142,9 +143,9 @@ test "concatRuntimeMulti" {
 
 /// Read contents of `/proc/mounts`, return allocated slice. Caller must free.
 ///
-/// See Andrew's pr notes #25077 (https://github.com/ziglang/zig/pull/25077)
+/// See Andrew's pr notes #25077 for notes on reading a file (https://github.com/ziglang/zig/pull/25077)
 pub fn readFileBytes(allocator: mem.Allocator, file_path: []const u8) ![]const u8 {
-    assert(file_path.len <= posix.PATH_MAX);
+    assert(file_path.len <= posix.PATH_MAX); // file path too long
     const file_contents: []const u8 = try fs.cwd().readFileAlloc(allocator, file_path, kibi * 8);
     errdefer allocator.free(file_contents);
     assert(file_contents.len > 0); // `file_contents` is zero bytes long -- failure reading
@@ -184,7 +185,7 @@ test "OutputWaybar" {
         .tooltip = "abc",
     };
 
-    try std.testing.expectEqualStrings("Storage", data.text);
+    try std.testing.expectEqualStrings("🖴", data.text);
     try std.testing.expectEqualStrings("abc", data.tooltip);
     try std.testing.expectEqualStrings("low", data.class);
     try std.testing.expectEqual(50, data.percentage);
@@ -192,13 +193,13 @@ test "OutputWaybar" {
     const as_json = try data.jsonify(allocator, &w);
     defer allocator.free(as_json);
 
-    const expected: []const u8 = "{\"text\":\"Storage\",\"tooltip\":\"abc\",\"class\":\"low\",\"percentage\":50}\n";
+    const expected: []const u8 = "{\"text\":\"🖴\",\"tooltip\":\"abc\",\"class\":\"low\",\"percentage\":50}\n";
     try std.testing.expectEqualStrings(expected, as_json);
 
     var parsed = try std.json.parseFromSlice(OutputWaybar, allocator, as_json, .{});
     defer parsed.deinit();
 
-    try std.testing.expectEqualStrings("Storage", parsed.value.text);
+    try std.testing.expectEqualStrings("🖴", parsed.value.text);
     try std.testing.expectEqualStrings("abc", parsed.value.tooltip);
     try std.testing.expectEqualStrings("low", parsed.value.class);
     try std.testing.expectEqual(50, parsed.value.percentage);
