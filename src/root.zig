@@ -51,7 +51,7 @@ pub fn rtSig(pid: linux.pid_t, n: u8) !void {
     assert(pid > 0);
     assert(n <= 32);
     const sig = linux.sigrtmin() + n;
-    assert(sig >= 34);
+    assert(sig >= 34); // Some systems use 32-33
     assert(sig <= linux.sigrtmax());
     try posix.kill(pid, sig);
     return;
